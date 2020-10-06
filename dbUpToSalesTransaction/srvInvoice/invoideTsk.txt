@@ -1,0 +1,31 @@
+USE [Saurav]
+GO
+
+/****** Object:  StoredProcedure [dbo].[SpAltInvoiceSalesTransactionTsk]    Script Date: 10/5/2020 2:51:48 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+--------------------------------------------sp Invoice Sales Transaction Tsk
+CREATE procedure [dbo].[SpAltInvoiceSalesTransactionTsk]
+@Json nvarchar(max)
+as
+begin
+
+	begin try
+		begin tran
+			exec SpAltInvoiceIns @Json = @Json output
+			exec SpAltSalesTransactionTagBackUpd @Json
+		commit tran
+	end try
+	begin catch
+		if @@trancount > 0 
+			rollback tran
+		throw
+	end catch
+end
+GO
+
+

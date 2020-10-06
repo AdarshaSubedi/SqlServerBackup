@@ -1,0 +1,137 @@
+USE [Saurav]
+GO
+
+/****** Object:  StoredProcedure [dbo].[SpAltInvoiceIns]    Script Date: 10/5/2020 2:49:54 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+CREATE proc [dbo].[SpAltInvoiceIns]
+@Json nvarchar(max) output
+as
+begin
+	DECLARE @InsertPersonId int = 1;
+	declare @customerCount int
+	= (
+		select count(*)from (
+			select CustomerId  from SalesTransaction where
+			SalesTransactionId in
+			(
+				select oj.salesTransactionId from openjson(@Json)
+				with(salesTransactionId int) as oj
+			)group by CustomerId
+		) as x
+	)
+	declare @invoicedTranCount int 
+	 = (
+		select count(*) from SalesTransaction
+		where SalesTransactionId in
+		(
+			select oj.salesTransactionId from openjson(@Json)
+			with (salesTransactionId int) as oj
+		)
+		and SalesTransaction.InvoiceId is not null
+	 )
+
+	IF (@InsertPersonId = 0)
+		BEGIN
+			RAISERROR('Insert person not found', 16, 1);
+		END;
+
+	ELSE if @customerCount > 1
+		begin
+		--RAISERROR('Can''t create a invoice for different customers', 16, 1);
+			set @Json = null
+		end
+	else if @invoicedTranCount > 0
+		--raiserror('Can''t create invoice of an invoiced transaction',16,1)
+		begin
+			set @Json = null
+		end
+	
+	else	
+		begin
+			declare @custId int;
+			declare @tranAmount money;
+			declare @discountRate int; 
+			declare @tranCount int;
+			declare @invoiceTotal money;
+
+			set @tranAmount 
+			= (
+				select sum(st.Amount) from SalesTransaction as st
+				where SalesTransactionId in
+				(
+					select oj.salesTransactionId from 
+					openjson(@Json) with (salesTransactionId int) as oj
+				)
+			)
+
+			set @custId 
+			= (
+				select CustomerId from SalesTransaction 
+				where SalesTransactionId in
+				(
+					select oj.salesTransactionId from 
+					openjson(@Json) with (salesTransactionId int) as oj
+				) group by CustomerId
+			)
+
+			set @discountRate = dbo.SfAltDiscountRateGet(@tranAmount)
+		
+			set @tranCount 
+			= (
+				select count(*) from SalesTransaction
+				where SalesTransactionId in
+				(
+					select oj.salesTransactionId from openjson(@Json)
+					with (salesTransactionId int) as oj
+				)
+			)
+
+			set @invoiceTotal = dbo.SfInvoiceTotalGet(@tranAmount, @discountRate)
+		
+			create table #invoiceIds(id int identity, InvoiceId int)
+			create table #salesIds(id int identity, SalesTransactionId int)
+
+			insert into Invoice 
+				(CustomerId, DiscountPercent,TransactionCount, 
+				Subtotal, Total, InsertPersonId)
+			output inserted.InvoiceId into #invoiceIds(InvoiceId)
+			values
+				(@custId, @discountRate, @tranCount, 
+				@tranAmount, @invoiceTotal, @InsertPersonId)
+				
+			update Invoice set 
+			InvoiceNumber = concat('Inv-',i.InvoiceId)
+			from #invoiceIds as i
+			inner join Invoice as inv on
+			i.InvoiceId = inv.InvoiceId
+			where inv.InvoiceId = i.InvoiceId
+		
+			insert into #salesIds(SalesTransactionId)
+			select oj.salesTransactionId from openjson(@Json)
+			with (salesTransactionId int) as oj
+			
+			if @Json is not null
+				select @Json 
+				= (
+					select i.InvoiceId as 'invoiceId', 
+					s.SalesTransactionId as 'salesTransactionId'
+					from #salesIds as s 
+					cross apply #invoiceIds as i
+					inner join Invoice as inv on inv.InvoiceId = i.InvoiceId
+					inner join SalesTransaction as st on st.SalesTransactionId = s.SalesTransactionId
+					for json path
+				)
+			else
+				select @Json
+				
+		end
+end
+GO
+
+

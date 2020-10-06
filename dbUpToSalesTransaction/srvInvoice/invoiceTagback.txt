@@ -1,0 +1,43 @@
+USE [Saurav]
+GO
+
+/****** Object:  StoredProcedure [dbo].[SpAltSalesTransactionTagBackUpd]    Script Date: 10/5/2020 2:50:58 PM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+-----------------------------------------sp alt sales transaction upd tagback
+CREATE procedure [dbo].[SpAltSalesTransactionTagBackUpd]
+@Json nvarchar(max)
+as
+begin
+	if @Json is null 
+		return
+	else
+	begin
+	begin try
+		begin tran
+			update SalesTransaction 
+				set SalesTransaction.InvoiceId = oj.invoiceId
+			from openjson(@Json)
+			with
+			(
+				salesTransactionId int,
+				invoiceId int
+			) as oj
+			where SalesTransaction.SalesTransactionId = oj.salesTransactionId
+
+		commit tran
+	end try
+	begin catch
+		if @@trancount > 0
+				rollback tran
+		throw
+	end catch
+	end
+end
+GO
+
+
